@@ -110,8 +110,6 @@ type DB struct {
 type Session struct {
 	DryRun                   bool
 	PrepareStmt              bool
-	PrepareStmtMaxSize       int
-	PrepareStmtTTL           time.Duration
 	NewDB                    bool
 	Initialized              bool
 	SkipHooks                bool
@@ -137,12 +135,16 @@ func Open(dialector Dialector, opts ...Option) (db *DB, err error) {
 		return isConfig && !isConfig2
 	})
 
+	var skipAfterInitialize bool
 	for _, opt := range opts {
 		if opt != nil {
 			if applyErr := opt.Apply(config); applyErr != nil {
 				return nil, applyErr
 			}
 			defer func(opt Option) {
+				if skipAfterInitialize {
+					return
+				}
 				if errr := opt.AfterInitialize(db); errr != nil {
 					err = errr
 				}
@@ -194,6 +196,10 @@ func Open(dialector Dialector, opts ...Option) (db *DB, err error) {
 			if db, _ := db.DB(); db != nil {
 				_ = db.Close()
 			}
+
+			// DB is not initialized, so we skip AfterInitialize
+			skipAfterInitialize = true
+			return
 		}
 
 		if config.TranslateError {
@@ -275,7 +281,7 @@ func (db *DB) Session(config *Session) *DB {
 		if v, ok := db.cacheStore.Load(preparedStmtDBKey); ok {
 			preparedStmt = v.(*PreparedStmtDB)
 		} else {
-			preparedStmt = NewPreparedStmtDB(db.ConnPool, config.PrepareStmtMaxSize, config.PrepareStmtTTL)
+			preparedStmt = NewPreparedStmtDB(db.ConnPool, db.PrepareStmtMaxSize, db.PrepareStmtTTL)
 			db.cacheStore.Store(preparedStmtDBKey, preparedStmt)
 		}
 
